@@ -1,0 +1,85 @@
+﻿// ============================================================================
+//  api_p8a_commands.h - module contract: state + interfaces of p8a_commands.
+//  Included only by translation units that reference this module.
+// ============================================================================
+#pragma once
+#include "core.h"
+
+inline PromptState* g_prompt = nullptr;
+inline ClipBlock g_clip;
+inline DWORD g_clipSeq = 0;
+inline PropState* g_prop = nullptr;
+inline SettingsState* g_settings = nullptr;
+LRESULT CALLBACK ModalFocusProc(HWND h, UINT msg, WPARAM wp, LPARAM lp,                                        UINT_PTR id, DWORD_PTR ref);
+void RunModalWindow(HWND h, HWND owner = nullptr);
+void CloseModalWindow(HWND h);
+void MsgLayout(MsgState* s);
+RECT MsgCloseRect(MsgState* s);
+LRESULT CALLBACK MsgProc(HWND h, UINT msg, WPARAM wp, LPARAM lp);
+void RegisterMsgClass();
+int ShowMessageBox(HWND owner, const std::wstring& text, const std::wstring& title, int mode);
+RECT PromptOkRect(PromptState* s);
+RECT PromptCancelRect(PromptState* s);
+RECT PromptCloseRect(PromptState* s);
+LRESULT CALLBACK PromptEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp,                                        UINT_PTR, DWORD_PTR);
+LRESULT CALLBACK PromptProc(HWND h, UINT msg, WPARAM wp, LPARAM lp);
+void RegisterPromptClass();
+std::wstring PromptText(const std::wstring& title, const std::wstring& hint, const std::wstring& initial);
+std::vector<std::wstring> PickFiles(const wchar_t* title, const COMDLG_FILTERSPEC* filters,                                            UINT filterCount, bool multi);
+std::wstring PickFolderPath(const wchar_t* title);
+std::wstring PickSaveDbPath(const std::wstring& suggested);
+bool SaveDocument(Doc& d, bool saveAs);
+void OpenDocumentFile(const std::wstring& path);
+void CmdOpen();
+void CmdNew();
+bool CloseDocumentAt(int index, bool fromExit = false);
+bool CloseAllForExit();
+bool PutClipboardText(const std::wstring& text);
+std::wstring GetClipboardText();
+std::wstring CellClipText(Doc& d, int r, int c);
+void CopySelection(Doc& d, bool cut);
+void SplitLines(const std::wstring& text, std::vector<std::wstring>& lines);
+void SplitTabs(const std::wstring& line, std::vector<std::wstring>& cells);
+int KindForPath(const std::wstring& path);
+std::wstring PrepareImportedPath(Doc& d, const std::wstring& abs, int kind);
+void ImportItemsAt(Doc& d, std::vector<ImportItem> items, int startR, int startC);
+void ImportPathsAt(Doc& d, const std::vector<std::wstring>& paths, int startR, int startC);
+void CmdImportFiles(bool imagesOnly);
+void CmdImportFolder();
+void CmdImportUrl();
+void PasteFromClipboard(Doc& d);
+void InsertRows(Doc& d, int at, int count);
+void InsertCols(Doc& d, int at, int count);
+void CmdInsert(int id);
+void CmdSum();
+void CmdOp(wchar_t op);
+bool CanShowProps(Doc& d);
+RECT PropCheckRect(PropState* s);
+RECT PropCopyRect(PropState* s);
+RECT PropNoCopyRect(PropState* s);
+RECT PropCloseRect(PropState* s);
+void PropDoCopy(PropState& s);
+LRESULT CALLBACK PropProc(HWND h, UINT msg, WPARAM wp, LPARAM lp);
+void RegisterPropClass();
+void CmdProperties(HWND ownerOverride = nullptr);
+RECT SetThemeRect(SettingsState* s, int index);
+RECT SetUiMinus(SettingsState* s);
+RECT SetUiPlus(SettingsState* s);
+RECT SetGridMinus(SettingsState* s);
+RECT SetGridPlus(SettingsState* s);
+RECT SetRowFrame(SettingsState* s);
+RECT SetColFrame(SettingsState* s);
+RECT SetAutoRect(SettingsState* s);
+RECT SetPropRect(SettingsState* s);
+RECT SetApplyRect(SettingsState* s);
+RECT SetCloseRect(SettingsState* s);
+RECT SetCloseX(SettingsState* s);
+void SettingsLayoutEdits(SettingsState* s);
+LRESULT CALLBACK SettingsEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR);
+void SettingsSetTheme(SettingsState* s, bool dark);
+bool SettingsApply(SettingsState* s);
+void SettingsClose(SettingsState* s);
+LRESULT CALLBACK SettingsProc(HWND h, UINT msg, WPARAM wp, LPARAM lp);
+void RegisterSettingsClass();
+void OpenSettingsWindow();
+void ExecuteCommand(int id);
