@@ -337,6 +337,9 @@ ToolLayout Toolbar::Buttons() const
     x = t.row.right + gap;
     t.col = { x, y, x + DpiScale(32), y + h };
     x = t.col.right + gap;
+    // Display precision switch: 原值 -> 小数 -> 整数, initialised to 小数.
+    t.mode = { x, y, x + DpiScale(56), y + h };
+    x = t.mode.right + gap;
     t.merge = { x, y, x + DpiScale(56), y + h };
     x = t.merge.right + DpiScale(16);
 
@@ -378,6 +381,7 @@ int Toolbar::Hit(POINT pt, bool& arrow) const
     if (PtInRect(&t.size, pt)) return 2;
     if (PtInRect(&t.row, pt)) return 10;
     if (PtInRect(&t.col, pt)) return 11;
+    if (PtInRect(&t.mode, pt)) return 17;
     if (PtInRect(&t.merge, pt)) return 16;
     for (int i = 0; i < 3; ++i)
         if (PtInRect(&t.align[i], pt)) return 6 + i;
@@ -610,6 +614,14 @@ void Toolbar::BuildSpec(HDC)
     EmitBox(s, t.size, std::to_wstring(fontSize), g_th.text, hoverId == 2, true);
     EmitBox(s, t.row, L"行", g_th.text, hoverId == 10, false);
     EmitBox(s, t.col, L"列", g_th.text, hoverId == 11, false);
+    static const wchar_t* kNumModeName[] = { L"原值", L"小数", L"整数" };
+    bool modeHot = (hoverId == 17);
+    s.Emit(PaintOp::FillRect, t.mode, modeHot ? g_th.hover : g_th.panel2);
+    s.Emit(PaintOp::FrameRect, t.mode, modeHot ? g_th.borderStrong : g_th.border).w = 1;
+    auto& mp0 = s.Emit(PaintOp::Text, t.mode, modeHot ? g_th.text : g_th.dim);
+    mp0.text = kNumModeName[g_numMode];
+    mp0.font = UiFont(9);
+    mp0.flags = DT_SINGLELINE | DT_CENTER | DT_VCENTER;
 
     bool merged = dp && SelectionIntersectsMerge(*dp);
     bool mergeHot = (hoverId == 16);
@@ -894,6 +906,12 @@ void Toolbar::Click(POINT pt)
         ApplyVAlignToSelection(id - 13);
     } else if (id == 16) {
         ToggleMergeSelection();
+    } else if (id == 17) {
+        // Display-only cycling: the stored text/formula keeps full precision,
+        // so returning to 原值 shows the original value again.
+        g_numMode = (g_numMode + 1) % 3;
+        ++g_contentRev;                    // re-resolve cached CellDisplay
+        if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
     } else if (id == 9) {
         CmdSum();
     } else if (id == 10) {

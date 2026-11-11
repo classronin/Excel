@@ -2494,6 +2494,7 @@ struct ScrollBar
 
 struct ToolLayout {
     RECT font = {}, size = {}, row = {}, col = {};
+    RECT mode = {};
     RECT merge = {};
     RECT align[3] = {};
     RECT valign[3] = {};

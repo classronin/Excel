@@ -5,6 +5,11 @@
 #pragma once
 #include "core.h"
 
+// Toolbar display precision: 0 = 原值, 1 = 小数 (two decimals, truncated),
+// 2 = 整数. Display only - the stored text/formula is never rewritten, so
+// returning to 原值 restores the full-precision reading. Initialised to 小数.
+inline int g_numMode = 1;
+
 std::wstring EvalFormula(Doc& doc, const std::wstring& formula, int depth = 0);
 void ApplyStyleToSelection(Doc& doc, const std::function<void(CellStyle&)>& fn);
 void ApplyFontToSelection(const std::wstring& face);

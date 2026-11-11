@@ -28,6 +28,22 @@ std::wstring EvalFormula(Doc& doc, const std::wstring& formula, int depth )
 }
 
 
+// Truncate a numeric string to `digits` decimal places, trimming trailing
+// zeros. String surgery (not scaling by 100) keeps 1.15 from becoming 1.14
+// through binary rounding. Non-numeric strings are never passed in.
+static std::wstring TruncateDecimals(const std::wstring& s, int digits)
+{
+    size_t dot = s.find(L'.');
+    if (dot == std::wstring::npos) return s;
+    if ((int)(s.size() - dot - 1) <= digits) return s;
+    std::wstring r = s.substr(0, dot + digits + 1);
+    while (!r.empty() && r.back() == L'0') r.pop_back();
+    if (!r.empty() && r.back() == L'.') r.pop_back();
+    if (r == L"-0") r = L"0";
+    return r;
+}
+
+
 std::wstring CellDisplay(Doc& doc, int r, int c)
 {
     Cell* cell = doc.Find(r, c);
@@ -36,6 +52,11 @@ std::wstring CellDisplay(Doc& doc, int r, int c)
     std::wstring value;
     if (!cell->formula.empty()) value = EvalFormula(doc, cell->formula, 0);
     else if (!cell->text.empty()) value = cell->text;
+    if (g_numMode != 0) {
+        double num;
+        if (ParseNum(value, num))
+            value = TruncateDecimals(value, g_numMode == 1 ? 2 : 0);
+    }
     cell->display = value;
     cell->displayRev = g_contentRev;
     return value;
