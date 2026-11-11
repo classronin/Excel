@@ -1394,11 +1394,98 @@ void CmdInsert(int id)
 // ---------------------------------------------------------------------------
 //  sum
 // ---------------------------------------------------------------------------
+
+// Ctrl+click keeps the active block and appends to d.selExtra in click order,
+// so a scattered selection reads as "the block that was picked first, then
+// every Ctrl+clicked block in the order it was added". Merge ranges normalise
+// to their anchor and duplicate hits collapse. Non-commutative operations use
+// this order directly: pick A2, then A1, then an empty cell and A2 op A1 wins.
+static bool PickScatteredCells(Doc& d, std::vector<std::pair<int, int>>& inputs,
+                               int& outR, int& outC, std::wstring& error)
+{
+    int r1, c1, r2, c2;
+    d.SelectionRect(r1, c1, r2, c2);
+    std::vector<MergeRange> ranges;
+    ranges.push_back({ r1, c1, r2, c2 });
+    for (auto& e : d.selExtra) ranges.push_back(e);
+
+    std::vector<std::pair<int, int>> cells;
+    std::unordered_set<long long> seen;
+    for (auto& e : ranges) {
+        for (int r = e.r1; r <= e.r2; ++r) {
+            for (int c = e.c1; c <= e.c2; ++c) {
+                int ar = r, ac = c;
+                if (const MergeRange* m = d.MergeAt(r, c)) { ar = m->r1; ac = m->c1; }
+                if (!seen.insert(CellKey(ar, ac)).second) continue;
+                cells.push_back({ ar, ac });
+            }
+        }
+    }
+
+    std::vector<std::pair<int, int>> empties;
+    inputs.clear();
+    for (auto& rc : cells) {
+        const Cell* cell = d.Find(rc.first, rc.second);
+        if (!cell || cell->IsEmpty()) empties.push_back(rc);
+        else inputs.push_back(rc);
+    }
+    if (empties.size() != 1) {
+        error = empties.empty()
+            ? L"请再选中一个空白格作为输出格"
+            : L"选中了多个空白格，无法确定输出格";
+        return false;
+    }
+    if (inputs.size() < 2) {
+        error = L"至少需要 2 个有内容的格";
+        return false;
+    }
+    outR = empties[0].first;
+    outC = empties[0].second;
+    return true;
+}
+
+
+static void WriteScatteredResult(Doc& d, int outR, int outC, const std::wstring& formula)
+{
+    d.PushUndo();
+    Cell& out = d.Ensure(outR, outC);
+    out.formula = formula;
+    out.text.clear();
+    out.path.clear();
+    out.kind = CK_TEXT;
+    d.selExtra.clear();
+    d.selAR = d.selFR = outR;
+    d.selAC = d.selFC = outC;
+    d.Touch();
+    EnsureCellVisible(d, outR, outC);
+}
+
+
 void CmdSum()
 {
     Doc* dp = ActiveDoc();
     if (!dp) return;
     Doc& d = *dp;
+
+    if (!d.selExtra.empty()) {
+        std::vector<std::pair<int, int>> inputs;
+        int outR = -1, outC = -1;
+        std::wstring error;
+        if (!PickScatteredCells(d, inputs, outR, outC, error)) {
+            SetStatus(L"总和：" + error);
+            return;
+        }
+        std::wstring args;
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            if (i) args += L",";
+            args += CellRefName(inputs[i].first, inputs[i].second);
+        }
+        std::wstring formula = L"=IF(COUNT(" + args + L")>0,SUM(" + args + L"),\"\")";
+        WriteScatteredResult(d, outR, outC, formula);
+        SetStatus(L"已写入 " + formula);
+        return;
+    }
+
     int r1, c1, r2, c2;
     d.SelectionRect(r1, c1, r2, c2);
     bool oneRow = (r1 == r2);
@@ -1460,6 +1547,35 @@ void CmdOp(wchar_t op)
     Doc* dp = ActiveDoc();
     if (!dp) return;
     Doc& d = *dp;
+
+    if (!d.selExtra.empty()) {
+        std::vector<std::pair<int, int>> inputs;
+        int outR = -1, outC = -1;
+        std::wstring error;
+        if (!PickScatteredCells(d, inputs, outR, outC, error)) {
+            SetStatus(L"运算：" + error);
+            return;
+        }
+        std::wstring args, expr;
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            std::wstring ref = CellRefName(inputs[i].first, inputs[i].second);
+            if (i) { args += L","; expr.push_back(op); }
+            args += ref;
+            expr += ref;
+        }
+        std::wstring formula;
+        if (op == L'+')
+            formula = L"=IF(COUNT(" + args + L")>0,SUM(" + args + L"),\"\")";
+        else
+            formula = L"=IF(COUNT(" + args + L")=" + std::to_wstring(inputs.size()) +
+                      L"," + expr + L",\"\")";
+        WriteScatteredResult(d, outR, outC, formula);
+        const wchar_t* name = (op == L'+') ? L"相加" : (op == L'-') ? L"相减" :
+                              (op == L'*') ? L"相乘" : L"相除";
+        SetStatus(std::wstring(L"已计算：") + name);
+        return;
+    }
+
     int r1, c1, r2, c2;
     d.SelectionRect(r1, c1, r2, c2);
     bool oneRow = (r1 == r2);
