@@ -52,6 +52,7 @@
 #define APP_NAME    L"Excel"
 #define APP_VERSION L"1.0"
 #define IDI_APP_ICON 101
+#define IDR_ABOUT_IMAGE 200
 #ifdef CLR_NONE
 #undef CLR_NONE
 #endif
@@ -70,7 +71,8 @@ inline const int kPaletteRows = 6;
 inline const int kPaletteCols = 12;
 inline const COLORREF kGhostKey = RGB(255, 0, 255);
 inline const COLORREF kBandKey = RGB(255, 0, 255);
-inline const wchar_t* kMenuTitles[3] = { L"文件", L"编辑", L"设置" };
+inline constexpr int kMenuCount = 4;
+inline const wchar_t* kMenuTitles[kMenuCount] = { L"文件", L"编辑", L"设置", L"关于" };
 inline const wchar_t kModalOwnerProp[] = L"ExcelModalOwnerEnabled";
 inline const COMDLG_FILTERSPEC kDbFilters[] = {
     { L"Excel 表格 (*.db)", L"*.db" },
@@ -90,6 +92,9 @@ enum class UiAction
     RowHeight,
     ColWidth,
     OpenSettings,
+    OpenAbout,
+    OpenNumbering,
+    OpenUnit,
     CloseTab,       // param = tab index
     CloseWindow,
     ClosePopups,    // dismiss every popup after the device event is done
@@ -332,6 +337,7 @@ struct Cell {
     std::wstring text;       // literal text
     std::wstring formula;    // starts with '='
     std::wstring path;       // stored path/url for CK_FILE/FOLDER/IMAGE/URL
+    std::wstring unit;       // 单位 suffix, shown to the right of the value
     int kind = CK_TEXT;
     CellStyle st;
 
@@ -341,7 +347,7 @@ struct Cell {
     uint64_t displayRev = 0;
 
     bool HasValue() const { return !text.empty() || !formula.empty(); }
-    bool IsEmpty() const { return text.empty() && formula.empty() && path.empty(); }
+    bool IsEmpty() const { return text.empty() && formula.empty() && path.empty() && unit.empty(); }
 };
 
 struct MergeRange {
@@ -854,7 +860,7 @@ struct Doc {
             "  row INTEGER NOT NULL, col INTEGER NOT NULL,"
             "  text TEXT, formula TEXT, kind INTEGER DEFAULT 0, path TEXT,"
             "  font TEXT, size INTEGER, fg INTEGER, textbg INTEGER, cellbg INTEGER,"
-            "  align INTEGER, bold INTEGER, italic INTEGER,"
+            "  align INTEGER, bold INTEGER, italic INTEGER, unit TEXT,"
             "  PRIMARY KEY(row, col));"
             "CREATE TABLE IF NOT EXISTS layout (type INTEGER NOT NULL, idx INTEGER NOT NULL, size INTEGER NOT NULL,"
             "  PRIMARY KEY(type, idx));"
@@ -879,6 +885,8 @@ struct Doc {
             sqlite3_finalize(st);
         }
         if (!okShape) { err = L"该 .db 不是 Excel 表格结构"; return false; }
+        // Older files predate the 单位 suffix column; add it in place (no-op if present).
+        sqlite3_exec(db, "ALTER TABLE cells ADD COLUMN unit TEXT;", nullptr, nullptr, nullptr);
         sqlite3_exec(db,
             "INSERT OR IGNORE INTO meta(key,value) VALUES('app','Excel');"
             "INSERT OR IGNORE INTO meta(key,value) VALUES('version','1');",
@@ -907,7 +915,7 @@ struct Doc {
         int maxR = 0, maxC = 0, n = 0;
         sqlite3_stmt* st = nullptr;
         const char* sql =
-            "SELECT row,col,text,formula,kind,path,font,size,fg,textbg,cellbg,align,bold,italic FROM cells;";
+            "SELECT row,col,text,formula,kind,path,font,size,fg,textbg,cellbg,align,bold,italic,unit FROM cells;";
         if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) != SQLITE_OK) {
             err = Utf8ToWide(sqlite3_errmsg(db));
             return false;
@@ -933,6 +941,7 @@ struct Doc {
             cell.st.align = sqlite3_column_int(st, 11);
             cell.st.bold = sqlite3_column_int(st, 12) != 0;
             cell.st.italic = sqlite3_column_int(st, 13) != 0;
+            cell.unit = colText(14);
             cells[CellKey(r, c)] = cell;
             if (r > maxR) maxR = r;
             if (c > maxC) maxC = c;
@@ -1037,8 +1046,8 @@ struct Doc {
 
         sqlite3_stmt* st = nullptr;
         const char* ins =
-            "INSERT INTO cells(row,col,text,formula,kind,path,font,size,fg,textbg,cellbg,align,bold,italic)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
+            "INSERT INTO cells(row,col,text,formula,kind,path,font,size,fg,textbg,cellbg,align,bold,italic,unit)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
         if (sqlite3_prepare_v2(db, ins, -1, &st, nullptr) != SQLITE_OK) {
             err = Utf8ToWide(sqlite3_errmsg(db));
             sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
@@ -1054,6 +1063,7 @@ struct Doc {
             std::string f = WideToUtf8(cell.formula);
             std::string p = WideToUtf8(cell.path);
             std::string face = WideToUtf8(cell.st.font);
+            std::string u = WideToUtf8(cell.unit);
             sqlite3_reset(st);
             sqlite3_bind_int(st, 1, r);
             sqlite3_bind_int(st, 2, c);
@@ -1069,6 +1079,7 @@ struct Doc {
             sqlite3_bind_int(st, 12, cell.st.align);
             sqlite3_bind_int(st, 13, cell.st.bold ? 1 : 0);
             sqlite3_bind_int(st, 14, cell.st.italic ? 1 : 0);
+            sqlite3_bind_text(st, 15, u.c_str(), -1, SQLITE_TRANSIENT);
             if (sqlite3_step(st) != SQLITE_DONE) {
                 ok = false;
                 err = Utf8ToWide(sqlite3_errmsg(db));
@@ -1668,7 +1679,7 @@ struct UiMods
 enum class PaintOp : unsigned char
 {
     FillRect, HLine, VLine, FrameRect, Text, OutlinedText,
-    PushClip, PopClip, Icon, Image, CloseX, Triangle, Lock, CheckMark, Chevron
+    PushClip, PopClip, Icon, Image, Bitmap, CloseX, Triangle, Lock, CheckMark, Chevron
 };
 
 // One primitive. Every geometric and stylistic decision has already been
@@ -1683,6 +1694,7 @@ struct PaintPrim
     std::wstring text;          // text, or image path for PaintOp::Image
     HFONT font = nullptr;
     HICON icon = nullptr;
+    HBITMAP bmp = nullptr;      // PaintOp::Bitmap source (p1/p2 = source w/h)
     UINT flags = 0;
     int w = 1;                  // line width / glyph radius
     int p1 = 0, p2 = 0, p3 = 0; // op-specific scalars (centre x/y, direction)
@@ -2496,6 +2508,7 @@ struct ToolLayout {
     RECT font = {}, size = {}, row = {}, col = {};
     RECT mode = {};
     RECT merge = {};
+    RECT num = {}, unit = {};
     RECT align[3] = {};
     RECT valign[3] = {};
     RECT fg = {}, outline = {}, cellbg = {};
@@ -2600,7 +2613,7 @@ struct MenuBar : UiObject
     int hover = -1;
 
     void BuildSpec(HDC dc) override;
-    void TopRects(HDC dc, RECT out[3]) const;  // one geometry source
+    void TopRects(HDC dc, RECT out[kMenuCount]) const;  // one geometry source
     RECT TopRect(int index) const;
     int IndexAt(POINT pt) const;
     void MouseDown(POINT pt, const UiMods& m) override;
@@ -2960,6 +2973,32 @@ struct PromptState {
     std::wstring result;
     bool ok = false;
     int hoverBtn = 0;
+    int width = 0, height = 0;
+};
+
+// About dialog: one line of text, one embedded 200x200 image, one 好 button.
+struct AboutState {
+    HWND hwnd = nullptr;
+    PaintSpec spec;
+    PaintSurface surface;
+    HBITMAP img = nullptr;
+    int imgW = 0, imgH = 0;
+    int hoverBtn = 0;
+    int width = 0, height = 0;
+};
+
+// 编号 / 单位 dialog: optional style dropdown (编号) + suffix edit + 确定/取消.
+struct LabelState {
+    HWND hwnd = nullptr;
+    HWND edit = nullptr;
+    PaintSpec spec;
+    PaintSurface surface;
+    bool numbering = false;      // true = 编号 (dropdown + sequence), false = 单位 (append)
+    int style = 0;               // 0 全角数字, 1 中文小写
+    bool styleOpen = false;
+    std::wstring suffix;
+    int hoverBtn = 0;            // 1 ok, 2 cancel
+    int hoverStyle = 0;          // 1 dropdown, 2..3 list items
     int width = 0, height = 0;
 };
 

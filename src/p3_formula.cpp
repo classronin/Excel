@@ -57,6 +57,7 @@ std::wstring CellDisplay(Doc& doc, int r, int c)
         if (ParseNum(value, num))
             value = TruncateDecimals(value, g_numMode == 1 ? 2 : 0);
     }
+    value += cell->unit;
     cell->display = value;
     cell->displayRev = g_contentRev;
     return value;

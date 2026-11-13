@@ -237,6 +237,18 @@ void ExecutePaintSpec(HDC dc, const PaintSpec& spec, const RECT* clip)
             DrawImageCell(dc, p.text, p.rc, animated);
             break;
         }
+        case PaintOp::Bitmap: {
+            if (!p.bmp || p.p1 <= 0 || p.p2 <= 0) break;
+            int dw = p.rc.right - p.rc.left, dh = p.rc.bottom - p.rc.top;
+            if (dw <= 0 || dh <= 0) break;
+            HDC mem = CreateCompatibleDC(dc);
+            HGDIOBJ old = SelectObject(mem, p.bmp);
+            BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+            AlphaBlend(dc, p.rc.left, p.rc.top, dw, dh, mem, 0, 0, p.p1, p.p2, bf);
+            SelectObject(mem, old);
+            DeleteDC(mem);
+            break;
+        }
         case PaintOp::CloseX:
             DrawCloseX(dc, p.p1, p.p2, p.w, p.color);
             break;

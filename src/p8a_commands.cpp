@@ -10,6 +10,7 @@
 #include "api_p1_core.h"
 #include "api_p2_doc.h"
 #include "api_p3_formula.h"
+#include "api_p4_image.h"
 #include "api_p5_popup.h"
 #include "api_p6a_grid_paint.h"
 #include "api_p6b_grid_input.h"
@@ -767,6 +768,509 @@ std::wstring PromptText(const std::wstring& title, const std::wstring& hint, con
     RunModalWindow(hwnd);
     return ps.ok ? ps.result : L"";
 }
+
+
+// ---------------------------------------------------------------------------
+//  about window (关于)
+// ---------------------------------------------------------------------------
+
+static RECT AboutCloseRect(AboutState* s)
+{
+    return { s->width - DpiScale(34), 0, s->width, DpiScale(34) };
+}
+
+static RECT AboutTextRect(AboutState* s)
+{
+    int x = (s->width - DpiScale(200)) / 2;
+    int top = DpiScale(34) + DpiScale(18);
+    return { x, top, x + DpiScale(200), top + DpiScale(26) };
+}
+
+static RECT AboutImgRect(AboutState* s)
+{
+    int x = (s->width - DpiScale(200)) / 2;
+    int top = AboutTextRect(s).bottom + DpiScale(12);
+    return { x, top, x + DpiScale(200), top + DpiScale(200) };
+}
+
+static RECT AboutOkRect(AboutState* s)
+{
+    int w = DpiScale(92), h = DpiScale(32);
+    int x = (s->width - w) / 2;
+    int top = AboutImgRect(s).bottom + DpiScale(18);
+    return { x, top, x + w, top + h };
+}
+
+static void BuildAboutSpec(AboutState& s, HDC)
+{
+    PaintSpec& p = s.spec;
+    p.Clear();
+    int w = s.width, hh = s.height;
+    EmitTitleBar(p, L"关于", w, hh);
+    RECT close = AboutCloseRect(&s);
+    EmitClose(p, (close.left + close.right) / 2, (close.top + close.bottom) / 2,
+              DpiScale(4), g_th.dim);
+    EmitText(p, L"请我喝杯咖啡", AboutTextRect(&s), g_th.text, UiFont(10),
+             DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
+    if (s.img) {
+        auto& bp = p.Emit(PaintOp::Bitmap, AboutImgRect(&s), 0);
+        bp.bmp = s.img;
+        bp.p1 = s.imgW;
+        bp.p2 = s.imgH;
+    }
+    EmitButton(p, AboutOkRect(&s), L"好", true, s.hoverBtn == 1);
+}
+
+LRESULT CALLBACK AboutProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    AboutState* s = (AboutState*)GetWindowLongPtrW(h, GWLP_USERDATA);
+    switch (msg) {
+    case WM_NCCREATE: {
+        CREATESTRUCTW* cs = (CREATESTRUCTW*)lp;
+        SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
+        return TRUE;
+    }
+    case WM_CREATE:
+        s = (AboutState*)GetWindowLongPtrW(h, GWLP_USERDATA);
+        if (s) s->hwnd = h;
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        if (s) {
+            BuildAboutSpec(*s, dc);
+            RECT c = {};
+            GetClientRect(h, &c);
+            PresentSpec(dc, s->surface, c, s->spec);
+        }
+        EndPaint(h, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (s) {
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            int hb = PtInRect(&AboutOkRect(s), pt) ? 1 : 0;
+            if (hb != s->hoverBtn) { s->hoverBtn = hb; InvalidateRect(h, nullptr, FALSE); }
+            TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, h, 0 };
+            TrackMouseEvent(&tme);
+        }
+        return 0;
+    case WM_MOUSELEAVE:
+        if (s && s->hoverBtn) { s->hoverBtn = 0; InvalidateRect(h, nullptr, FALSE); }
+        return 0;
+    case WM_LBUTTONDOWN: {
+        if (!s) return 0;
+        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        RECT close = AboutCloseRect(s);
+        if (PtInRect(&close, pt)) { CloseModalWindow(h); return 0; }
+        if (pt.y < DpiScale(34)) {
+            ReleaseCapture();
+            SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            return 0;
+        }
+        if (PtInRect(&AboutOkRect(s), pt)) { CloseModalWindow(h); return 0; }
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE || wp == VK_RETURN) { CloseModalWindow(h); return 0; }
+        return 0;
+    case WM_CLOSE:
+        CloseModalWindow(h);
+        return 0;
+    case WM_DESTROY:
+        if (s) {
+            if (s->img) { DeleteObject(s->img); s->img = nullptr; }
+            s->hwnd = nullptr;
+        }
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+void RegisterAboutClass()
+{
+    static bool done = false;
+    if (done) return;
+    WNDCLASSEXW wc = { sizeof(wc) };
+    wc.style = CS_DROPSHADOW;
+    wc.lpfnWndProc = AboutProc;
+    wc.hInstance = g_inst;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.lpszClassName = L"ExcelAbout";
+    RegisterClassExW(&wc);
+    done = true;
+}
+
+void ShowAbout()
+{
+    RegisterAboutClass();
+    AboutState st;
+    st.img = LoadEmbeddedImage(IDR_ABOUT_IMAGE, st.imgW, st.imgH);
+    st.width = DpiScale(200) + DpiScale(24) * 2;
+    st.height = AboutOkRect(&st).bottom + DpiScale(20);
+    RECT o;
+    GetWindowRect(g_hwnd, &o);
+    int x = (o.left + o.right) / 2 - st.width / 2;
+    int y = (o.top + o.bottom) / 2 - st.height / 2;
+    HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"ExcelAbout", L"", WS_POPUP | WS_CLIPCHILDREN,
+                                x, y, st.width, st.height, g_hwnd, nullptr, g_inst, &st);
+    if (!hwnd) { if (st.img) DeleteObject(st.img); return; }
+    RunModalWindow(hwnd);
+}
+
+
+// ---------------------------------------------------------------------------
+//  编号 / 单位 dialogs
+// ---------------------------------------------------------------------------
+
+static const wchar_t* kLabelStyle[] = { L"全角数字", L"中文小写" };
+
+// Selected cells in pick order: the active block first, then every Ctrl+clicked
+// block in the order added; merges normalise to their anchor, duplicates collapse.
+static void OrderedSelectionCells(Doc& d, std::vector<std::pair<int, int>>& out)
+{
+    int r1, c1, r2, c2;
+    d.SelectionRect(r1, c1, r2, c2);
+    std::vector<MergeRange> ranges;
+    ranges.push_back({ r1, c1, r2, c2 });
+    for (auto& e : d.selExtra) ranges.push_back(e);
+    std::unordered_set<long long> seen;
+    out.clear();
+    for (auto& e : ranges) {
+        for (int r = e.r1; r <= e.r2; ++r) {
+            for (int c = e.c1; c <= e.c2; ++c) {
+                int ar = r, ac = c;
+                if (const MergeRange* m = d.MergeAt(r, c)) { ar = m->r1; ac = m->c1; }
+                if (!seen.insert(CellKey(ar, ac)).second) continue;
+                out.push_back({ ar, ac });
+            }
+        }
+    }
+}
+
+static std::wstring FullWidthNum(int n)
+{
+    std::wstring s = std::to_wstring(n), out;
+    for (wchar_t ch : s)
+        out += (ch >= L'0' && ch <= L'9') ? (wchar_t)(0xFF10 + (ch - L'0')) : ch;
+    return out;
+}
+
+static std::wstring CnBelow10000(int n)
+{
+    static const wchar_t* d[] = { L"零", L"一", L"二", L"三", L"四", L"五", L"六", L"七", L"八", L"九" };
+    static const wchar_t* u[] = { L"", L"十", L"百", L"千" };
+    static const int div[] = { 1, 10, 100, 1000 };
+    std::wstring res;
+    bool started = false, zero = false;
+    for (int pos = 3; pos >= 0; --pos) {
+        int dig = (n / div[pos]) % 10;
+        if (dig == 0) { if (started) zero = true; continue; }
+        if (zero) { res += L"零"; zero = false; }
+        res += d[dig];
+        res += u[pos];
+        started = true;
+    }
+    if (res.rfind(L"一十", 0) == 0) res = res.substr(1);
+    return res;
+}
+
+static std::wstring ChineseLowerNum(int n)
+{
+    if (n <= 0) return L"零";
+    if (n < 10000) return CnBelow10000(n);
+    if (n < 100000000) {
+        std::wstring s = CnBelow10000(n / 10000) + L"万";
+        int rem = n % 10000;
+        if (rem) { if (rem < 1000) s += L"零"; s += CnBelow10000(rem); }
+        return s;
+    }
+    return FullWidthNum(n);
+}
+
+static std::wstring Numeral(int style, int n)
+{
+    return style == 1 ? ChineseLowerNum(n) : FullWidthNum(n);
+}
+
+static RECT LabelCloseRect(LabelState* s)
+{
+    return { s->width - DpiScale(34), 0, s->width, DpiScale(34) };
+}
+
+static RECT LabelStyleRect(LabelState* s)
+{
+    return { DpiScale(20), DpiScale(50), DpiScale(150), DpiScale(80) };
+}
+
+static RECT LabelStyleItemRect(LabelState* s, int i)
+{
+    RECT dr = LabelStyleRect(s);
+    int h = DpiScale(28);
+    return { dr.left, dr.bottom + i * h, dr.right, dr.bottom + (i + 1) * h };
+}
+
+static RECT LabelEditRect(LabelState* s)
+{
+    int left = s->numbering ? DpiScale(160) : DpiScale(20);
+    return { left, DpiScale(50), s->width - DpiScale(20), DpiScale(80) };
+}
+
+static RECT LabelOkRect(LabelState* s)
+{
+    int w = DpiScale(92), h = DpiScale(30);
+    return { s->width - DpiScale(20) - w * 2 - DpiScale(8), s->height - DpiScale(20) - h,
+             s->width - DpiScale(20) - w - DpiScale(8), s->height - DpiScale(20) };
+}
+
+static RECT LabelCancelRect(LabelState* s)
+{
+    int w = DpiScale(92), h = DpiScale(30);
+    return { s->width - DpiScale(20) - w, s->height - DpiScale(20) - h,
+             s->width - DpiScale(20), s->height - DpiScale(20) };
+}
+
+static void BuildLabelSpec(LabelState& s, HDC)
+{
+    PaintSpec& p = s.spec;
+    p.Clear();
+    int w = s.width, hh = s.height;
+    EmitTitleBar(p, s.numbering ? L"编号" : L"单位", w, hh);
+    RECT close = LabelCloseRect(&s);
+    EmitClose(p, (close.left + close.right) / 2, (close.top + close.bottom) / 2,
+              DpiScale(4), g_th.dim);
+
+    if (s.numbering) {
+        RECT dr = LabelStyleRect(&s);
+        bool hot = (s.hoverStyle == 1) || s.styleOpen;
+        p.Emit(PaintOp::FillRect, dr, hot ? g_th.hover : g_th.panel2);
+        p.Emit(PaintOp::FrameRect, dr, hot ? g_th.borderStrong : g_th.border).w = 1;
+        RECT tr = { dr.left + DpiScale(9), dr.top, dr.right - DpiScale(20), dr.bottom };
+        EmitText(p, kLabelStyle[s.style], tr, g_th.text, UiFont(9),
+                 DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        auto& a = p.Emit(PaintOp::Triangle, RECT{}, g_th.dim);
+        a.p1 = dr.right - DpiScale(10);
+        a.p2 = (dr.top + dr.bottom) / 2;
+        a.w = DpiScale(4);
+    }
+
+    RECT er = LabelEditRect(&s);
+    p.Emit(PaintOp::FrameRect, er, g_th.border).w = 1;
+
+    if (s.numbering && s.styleOpen) {
+        for (int i = 0; i < 2; ++i) {
+            RECT ir = LabelStyleItemRect(&s, i);
+            bool sel = (i == s.style);
+            bool hot = (s.hoverStyle == 2 + i);
+            p.Emit(PaintOp::FillRect, ir, hot ? g_th.hover : g_th.panel2);
+            p.Emit(PaintOp::FrameRect, ir, g_th.border).w = 1;
+            RECT tr = { ir.left + DpiScale(9), ir.top, ir.right - DpiScale(9), ir.bottom };
+            EmitText(p, kLabelStyle[i], tr, sel ? g_th.accent : g_th.text, UiFont(9),
+                     DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        }
+    }
+
+    EmitButton(p, LabelOkRect(&s), L"确定", true, s.hoverBtn == 1);
+    EmitButton(p, LabelCancelRect(&s), L"取消", false, s.hoverBtn == 2);
+}
+
+static LRESULT CALLBACK LabelEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR)
+{
+    if (msg == WM_KEYDOWN) {
+        if (wp == VK_RETURN) { PostMessageW(GetParent(h), WM_APP + 1, 0, 0); return 0; }
+        if (wp == VK_ESCAPE) { PostMessageW(GetParent(h), WM_APP + 2, 0, 0); return 0; }
+    }
+    return DefSubclassProc(h, msg, wp, lp);
+}
+
+static void LabelApply(LabelState& s)
+{
+    wchar_t buf[4096];
+    GetWindowTextW(s.edit, buf, 4096);
+    s.suffix = buf;
+    Doc* dp = ActiveDoc();
+    if (!dp) return;
+    Doc& d = *dp;
+    std::vector<std::pair<int, int>> cells;
+    OrderedSelectionCells(d, cells);
+    if (cells.empty()) { SetStatus(L"请先选中表格"); return; }
+    d.PushUndo();
+    for (size_t i = 0; i < cells.size(); ++i) {
+        Cell& c = d.Ensure(cells[i].first, cells[i].second);
+        if (s.numbering) {
+            c.text = Numeral(s.style, (int)i + 1) + s.suffix;
+            c.formula.clear();
+            c.path.clear();
+            c.kind = CK_TEXT;
+        } else {
+            // 单位 is a live suffix, not baked text: a later edit of the value
+            // keeps the unit to its right (empty + 元, then type 200 -> 200元).
+            c.unit = s.suffix;
+        }
+    }
+    d.Touch();
+    SetStatus(Format(s.numbering ? L"已编号 %d 格" : L"已加单位 %d 格", (int)cells.size()));
+}
+
+LRESULT CALLBACK LabelProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    LabelState* s = (LabelState*)GetWindowLongPtrW(h, GWLP_USERDATA);
+    switch (msg) {
+    case WM_NCCREATE: {
+        CREATESTRUCTW* cs = (CREATESTRUCTW*)lp;
+        SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
+        return TRUE;
+    }
+    case WM_CREATE: {
+        s = (LabelState*)GetWindowLongPtrW(h, GWLP_USERDATA);
+        if (!s) return -1;
+        s->hwnd = h;
+        RECT er = LabelEditRect(s);
+        s->edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                  er.left + 1, er.top + 1, er.right - er.left - 2, er.bottom - er.top - 2,
+                                  h, (HMENU)2001, g_inst, nullptr);
+        SendMessageW(s->edit, WM_SETFONT, (WPARAM)UiFont(11), TRUE);
+        SendMessageW(s->edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(DpiScale(6), DpiScale(6)));
+        SetWindowSubclass(s->edit, LabelEditProc, 1, 0);
+        SetWindowTextW(s->edit, s->suffix.c_str());
+        SendMessageW(s->edit, EM_SETSEL, 0, -1);
+        SetFocus(s->edit);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        if (s) {
+            BuildLabelSpec(*s, dc);
+            RECT c = {};
+            GetClientRect(h, &c);
+            PresentSpec(dc, s->surface, c, s->spec);
+        }
+        EndPaint(h, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (s) {
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            int hb = 0, hs = 0;
+            if (PtInRect(&LabelOkRect(s), pt)) hb = 1;
+            else if (PtInRect(&LabelCancelRect(s), pt)) hb = 2;
+            if (s->numbering) {
+                if (s->styleOpen) {
+                    for (int i = 0; i < 2; ++i)
+                        if (PtInRect(&LabelStyleItemRect(s, i), pt)) hs = 2 + i;
+                }
+                if (!hs && PtInRect(&LabelStyleRect(s), pt)) hs = 1;
+            }
+            if (hb != s->hoverBtn || hs != s->hoverStyle) {
+                s->hoverBtn = hb; s->hoverStyle = hs;
+                InvalidateRect(h, nullptr, FALSE);
+            }
+            TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, h, 0 };
+            TrackMouseEvent(&tme);
+        }
+        return 0;
+    case WM_MOUSELEAVE:
+        if (s && (s->hoverBtn || s->hoverStyle)) {
+            s->hoverBtn = 0; s->hoverStyle = 0;
+            InvalidateRect(h, nullptr, FALSE);
+        }
+        return 0;
+    case WM_LBUTTONDOWN: {
+        if (!s) return 0;
+        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (PtInRect(&LabelCloseRect(s), pt)) { CloseModalWindow(h); return 0; }
+        if (pt.y < DpiScale(34)) {
+            ReleaseCapture();
+            SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            return 0;
+        }
+        if (s->numbering) {
+            if (s->styleOpen) {
+                for (int i = 0; i < 2; ++i) {
+                    if (PtInRect(&LabelStyleItemRect(s, i), pt)) {
+                        s->style = i; s->styleOpen = false; s->hoverStyle = 0;
+                        InvalidateRect(h, nullptr, FALSE);
+                        return 0;
+                    }
+                }
+            }
+            if (PtInRect(&LabelStyleRect(s), pt)) {
+                s->styleOpen = !s->styleOpen;
+                InvalidateRect(h, nullptr, FALSE);
+                return 0;
+            }
+            if (s->styleOpen) { s->styleOpen = false; InvalidateRect(h, nullptr, FALSE); }
+        }
+        if (PtInRect(&LabelOkRect(s), pt)) { LabelApply(*s); CloseModalWindow(h); return 0; }
+        if (PtInRect(&LabelCancelRect(s), pt)) { CloseModalWindow(h); return 0; }
+        SetFocus(s->edit);
+        return 0;
+    }
+    case WM_APP + 1:
+        if (s) { LabelApply(*s); CloseModalWindow(h); }
+        return 0;
+    case WM_APP + 2:
+        CloseModalWindow(h);
+        return 0;
+    case WM_KEYDOWN:
+        if (wp == VK_RETURN) { if (s) { LabelApply(*s); CloseModalWindow(h); } return 0; }
+        if (wp == VK_ESCAPE) { CloseModalWindow(h); return 0; }
+        return 0;
+    case WM_CLOSE:
+        CloseModalWindow(h);
+        return 0;
+    case WM_CTLCOLOREDIT: {
+        HDC dc = (HDC)wp;
+        SetTextColor(dc, g_th.text);
+        SetBkColor(dc, g_th.panel2);
+        return (LRESULT)Brush(g_th.panel2);
+    }
+    case WM_DESTROY:
+        if (s) { s->hwnd = nullptr; s->edit = nullptr; }
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+void RegisterLabelClass()
+{
+    static bool done = false;
+    if (done) return;
+    WNDCLASSEXW wc = { sizeof(wc) };
+    wc.style = CS_DROPSHADOW;
+    wc.lpfnWndProc = LabelProc;
+    wc.hInstance = g_inst;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.lpszClassName = L"ExcelLabel";
+    RegisterClassExW(&wc);
+    done = true;
+}
+
+static void RunLabelDialog(bool numbering)
+{
+    RegisterLabelClass();
+    LabelState st;
+    st.numbering = numbering;
+    st.suffix = numbering ? L"" : L"元";
+    st.width = DpiScale(420);
+    st.height = DpiScale(150);
+    RECT o;
+    GetWindowRect(g_hwnd, &o);
+    int x = (o.left + o.right) / 2 - st.width / 2;
+    int y = (o.top + o.bottom) / 2 - st.height / 2;
+    HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"ExcelLabel", L"", WS_POPUP | WS_CLIPCHILDREN,
+                                x, y, st.width, st.height, g_hwnd, nullptr, g_inst, &st);
+    if (!hwnd) return;
+    RunModalWindow(hwnd);
+}
+
+void ShowNumbering() { RunLabelDialog(true); }
+void ShowUnit() { RunLabelDialog(false); }
 
 
 // ---------------------------------------------------------------------------

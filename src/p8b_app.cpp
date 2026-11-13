@@ -170,10 +170,15 @@ std::vector<MenuItem> BuildContextMenu()
 
 void OpenTopMenu(int index)
 {
-    if (index < 0 || index > 2) return;
+    if (index < 0 || index >= kMenuCount) return;
     if (index == 2) {
         CloseAllPopups();
         g_actions.Post(UiAction::OpenSettings);
+        return;
+    }
+    if (index == 3) {
+        CloseAllPopups();
+        g_actions.Post(UiAction::OpenAbout);
         return;
     }
     RECT r = g_ui.menu.TopRect(index);
@@ -1247,6 +1252,15 @@ void ActionBus::Drain()
         case UiAction::OpenSettings:
             OpenSettingsWindow();
             break;
+        case UiAction::OpenAbout:
+            ShowAbout();
+            break;
+        case UiAction::OpenNumbering:
+            ShowNumbering();
+            break;
+        case UiAction::OpenUnit:
+            ShowUnit();
+            break;
         case UiAction::CloseTab:
             CloseDocumentAt(a.param, false);
             break;
@@ -1291,8 +1305,8 @@ bool ActionBus::HandleKey(WPARAM vk, const UiMods& m)
         if (g_ui.menuPopup.topIndex >= 0) {
             if (vk == VK_UP) { MenuKeyMove(-1); return true; }
             if (vk == VK_DOWN) { MenuKeyMove(1); return true; }
-            if (vk == VK_LEFT) { OpenTopMenu((g_ui.menuPopup.topIndex + 2) % 3); return true; }
-            if (vk == VK_RIGHT) { OpenTopMenu((g_ui.menuPopup.topIndex + 1) % 3); return true; }
+            if (vk == VK_LEFT) { OpenTopMenu((g_ui.menuPopup.topIndex + kMenuCount - 1) % kMenuCount); return true; }
+            if (vk == VK_RIGHT) { OpenTopMenu((g_ui.menuPopup.topIndex + 1) % kMenuCount); return true; }
             if (vk == VK_RETURN) { MenuKeyExecute(); return true; }
         }
         return true;

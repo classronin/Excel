@@ -213,12 +213,12 @@ void TitleBar::BuildSpec(HDC)
 
 
 // One geometry source for both the frame declaration and input hit-testing.
-void MenuBar::TopRects(HDC dc, RECT out[3]) const
+void MenuBar::TopRects(HDC dc, RECT out[kMenuCount]) const
 {
     int pad = DpiScale(14);
     int x = rect.left + DpiScale(8);
     HFONT font = UiFont(10);
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < kMenuCount; ++i) {
         SIZE sz = MeasureText(dc, kMenuTitles[i], font);
         int w = sz.cx + pad * 2;
         out[i] = { x, rect.top, x + w, rect.bottom };
@@ -229,8 +229,8 @@ void MenuBar::TopRects(HDC dc, RECT out[3]) const
 
 RECT MenuBar::TopRect(int index) const
 {
-    if (index < 0 || index > 2) return { 0, 0, 0, 0 };
-    RECT out[3];
+    if (index < 0 || index >= kMenuCount) return { 0, 0, 0, 0 };
+    RECT out[kMenuCount];
     HDC dc = GetDC(g_hwnd);
     TopRects(dc, out);
     ReleaseDC(g_hwnd, dc);
@@ -241,11 +241,11 @@ RECT MenuBar::TopRect(int index) const
 int MenuBar::IndexAt(POINT pt) const
 {
     if (!PtInRect(&rect, pt)) return -1;
-    RECT out[3];
+    RECT out[kMenuCount];
     HDC dc = GetDC(g_hwnd);
     TopRects(dc, out);
     ReleaseDC(g_hwnd, dc);
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < kMenuCount; ++i)
         if (pt.x >= out[i].left && pt.x < out[i].right) return i;
     return -1;
 }
@@ -288,9 +288,9 @@ void MenuBar::BuildSpec(HDC dc)
     RECT bottomLine = { 0, r.bottom - 1, r.right, r.bottom - 1 };
     s.Emit(PaintOp::HLine, bottomLine, g_th.border).w = 1;
 
-    RECT mr[3];
+    RECT mr[kMenuCount];
     TopRects(dc, mr);
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < kMenuCount; ++i) {
         bool active = (g_ui.menuPopup.topIndex == i);
         bool hot = (hover == i);
         if (active) {
@@ -320,6 +320,14 @@ void MenuBar::BuildSpec(HDC dc)
 //  toolbar layout
 // ---------------------------------------------------------------------------
 
+static int TightBtnW(const wchar_t* label)
+{
+    HDC dc = GetDC(g_hwnd);
+    SIZE sz = MeasureText(dc, label, UiFont(9));
+    ReleaseDC(g_hwnd, dc);
+    return sz.cx + DpiScale(16);
+}
+
 ToolLayout Toolbar::Buttons() const
 {
     ToolLayout t;
@@ -338,10 +346,14 @@ ToolLayout Toolbar::Buttons() const
     t.col = { x, y, x + DpiScale(32), y + h };
     x = t.col.right + gap;
     // Display precision switch: 原值 -> 小数 -> 整数, initialised to 小数.
-    t.mode = { x, y, x + DpiScale(56), y + h };
+    t.mode = { x, y, x + TightBtnW(L"小数"), y + h };
     x = t.mode.right + gap;
-    t.merge = { x, y, x + DpiScale(56), y + h };
-    x = t.merge.right + DpiScale(16);
+    t.merge = { x, y, x + TightBtnW(L"合并"), y + h };
+    x = t.merge.right + gap;
+    t.num = { x, y, x + TightBtnW(L"编号"), y + h };
+    x = t.num.right + gap;
+    t.unit = { x, y, x + TightBtnW(L"单位"), y + h };
+    x = t.unit.right + DpiScale(16);
 
     int aw = DpiScale(36);
     for (int i = 0; i < 3; ++i) {
@@ -383,6 +395,8 @@ int Toolbar::Hit(POINT pt, bool& arrow) const
     if (PtInRect(&t.col, pt)) return 11;
     if (PtInRect(&t.mode, pt)) return 17;
     if (PtInRect(&t.merge, pt)) return 16;
+    if (PtInRect(&t.num, pt)) return 18;
+    if (PtInRect(&t.unit, pt)) return 19;
     for (int i = 0; i < 3; ++i)
         if (PtInRect(&t.align[i], pt)) return 6 + i;
     for (int i = 0; i < 3; ++i)
@@ -618,7 +632,7 @@ void Toolbar::BuildSpec(HDC)
     bool modeHot = (hoverId == 17);
     s.Emit(PaintOp::FillRect, t.mode, modeHot ? g_th.hover : g_th.panel2);
     s.Emit(PaintOp::FrameRect, t.mode, modeHot ? g_th.borderStrong : g_th.border).w = 1;
-    auto& mp0 = s.Emit(PaintOp::Text, t.mode, modeHot ? g_th.text : g_th.dim);
+    auto& mp0 = s.Emit(PaintOp::Text, t.mode, g_th.text);
     mp0.text = kNumModeName[g_numMode];
     mp0.font = UiFont(9);
     mp0.flags = DT_SINGLELINE | DT_CENTER | DT_VCENTER;
@@ -629,11 +643,26 @@ void Toolbar::BuildSpec(HDC)
            merged ? g_th.accentSoft : (mergeHot ? g_th.hover : g_th.panel2));
     s.Emit(PaintOp::FrameRect, t.merge,
            merged ? g_th.accent : (mergeHot ? g_th.borderStrong : g_th.border)).w = 1;
-    auto& mp = s.Emit(PaintOp::Text, t.merge,
-                      merged ? g_th.accent : (mergeHot ? g_th.text : g_th.dim));
+    auto& mp = s.Emit(PaintOp::Text, t.merge, merged ? g_th.accent : g_th.text);
     mp.text = merged ? L"取消" : L"合并";
     mp.font = UiFont(9);
     mp.flags = DT_SINGLELINE | DT_CENTER | DT_VCENTER;
+
+    bool numHot = (hoverId == 18);
+    s.Emit(PaintOp::FillRect, t.num, numHot ? g_th.hover : g_th.panel2);
+    s.Emit(PaintOp::FrameRect, t.num, numHot ? g_th.borderStrong : g_th.border).w = 1;
+    auto& np = s.Emit(PaintOp::Text, t.num, g_th.text);
+    np.text = L"编号";
+    np.font = UiFont(9);
+    np.flags = DT_SINGLELINE | DT_CENTER | DT_VCENTER;
+
+    bool unitHot = (hoverId == 19);
+    s.Emit(PaintOp::FillRect, t.unit, unitHot ? g_th.hover : g_th.panel2);
+    s.Emit(PaintOp::FrameRect, t.unit, unitHot ? g_th.borderStrong : g_th.border).w = 1;
+    auto& up = s.Emit(PaintOp::Text, t.unit, g_th.text);
+    up.text = L"单位";
+    up.font = UiFont(9);
+    up.flags = DT_SINGLELINE | DT_CENTER | DT_VCENTER;
 
     int alg = dp ? SelectionAlign(*dp) : 0;
     for (int i = 0; i < 3; ++i) {
@@ -912,6 +941,10 @@ void Toolbar::Click(POINT pt)
         g_numMode = (g_numMode + 1) % 3;
         ++g_contentRev;                    // re-resolve cached CellDisplay
         if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+    } else if (id == 18) {
+        g_actions.Post(UiAction::OpenNumbering);
+    } else if (id == 19) {
+        g_actions.Post(UiAction::OpenUnit);
     } else if (id == 9) {
         CmdSum();
     } else if (id == 10) {

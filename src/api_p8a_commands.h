@@ -82,4 +82,7 @@ void SettingsClose(SettingsState* s);
 LRESULT CALLBACK SettingsProc(HWND h, UINT msg, WPARAM wp, LPARAM lp);
 void RegisterSettingsClass();
 void OpenSettingsWindow();
+void ShowAbout();
+void ShowNumbering();
+void ShowUnit();
 void ExecuteCommand(int id);

@@ -225,6 +225,79 @@ std::shared_ptr<ImageData> GetImage(const std::wstring& absPath, int boxW, int b
 }
 
 
+HBITMAP LoadEmbeddedImage(UINT resId, int& w, int& h)
+{
+    w = h = 0;
+    HRSRC rc = FindResourceW(g_inst, MAKEINTRESOURCEW(resId), RT_RCDATA);
+    if (!rc) return nullptr;
+    HGLOBAL res = LoadResource(g_inst, rc);
+    if (!res) return nullptr;
+    const void* data = LockResource(res);
+    DWORD size = SizeofResource(g_inst, rc);
+    if (!data || !size) return nullptr;
+
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!mem) return nullptr;
+    void* dst = GlobalLock(mem);
+    if (!dst) { GlobalFree(mem); return nullptr; }
+    memcpy(dst, data, size);
+    GlobalUnlock(mem);
+    IStream* stream = nullptr;
+    if (FAILED(CreateStreamOnHGlobal(mem, TRUE, &stream)) || !stream) {
+        GlobalFree(mem);
+        return nullptr;
+    }
+
+    IWICImagingFactory* fac = WicFactory();
+    HBITMAP out = nullptr;
+    if (fac) {
+        IWICBitmapDecoder* decoder = nullptr;
+        if (SUCCEEDED(fac->CreateDecoderFromStream(stream, nullptr,
+                        WICDecodeMetadataCacheOnDemand, &decoder)) && decoder) {
+            IWICBitmapFrameDecode* frame = nullptr;
+            if (SUCCEEDED(decoder->GetFrame(0, &frame)) && frame) {
+                UINT sw = 0, sh = 0;
+                frame->GetSize(&sw, &sh);
+                IWICFormatConverter* conv = nullptr;
+                if (sw && sh &&
+                    SUCCEEDED(fac->CreateFormatConverter(&conv)) && conv &&
+                    SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppPBGRA,
+                        WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+                    UINT stride = sw * 4;
+                    std::vector<BYTE> pixels((size_t)stride * sh);
+                    if (SUCCEEDED(conv->CopyPixels(nullptr, stride,
+                                    (UINT)pixels.size(), pixels.data()))) {
+                        BITMAPINFO bmi = {};
+                        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                        bmi.bmiHeader.biWidth = (LONG)sw;
+                        bmi.bmiHeader.biHeight = -(LONG)sh;
+                        bmi.bmiHeader.biPlanes = 1;
+                        bmi.bmiHeader.biBitCount = 32;
+                        bmi.bmiHeader.biCompression = BI_RGB;
+                        void* bits = nullptr;
+                        HBITMAP bmp = CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS,
+                                                       &bits, nullptr, 0);
+                        if (bmp && bits) {
+                            memcpy(bits, pixels.data(), pixels.size());
+                            out = bmp;
+                            w = (int)sw;
+                            h = (int)sh;
+                        } else if (bmp) {
+                            DeleteObject(bmp);
+                        }
+                    }
+                }
+                if (conv) conv->Release();
+                frame->Release();
+            }
+            decoder->Release();
+        }
+    }
+    stream->Release();
+    return out;
+}
+
+
 // 绘制图像（保持比例，居中）
 void DrawImageCell(HDC dc, const std::wstring& absPath, const RECT& rc, bool& animated)
 {

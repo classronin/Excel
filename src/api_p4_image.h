@@ -15,3 +15,6 @@ std::shared_ptr<ImageData> LoadImageFallback(const std::wstring& path, int boxW,
 void TrimImageCache();
 std::shared_ptr<ImageData> GetImage(const std::wstring& absPath, int boxW, int boxH);
 void DrawImageCell(HDC dc, const std::wstring& absPath, const RECT& rc, bool& animated);
+// Decode an embedded RCDATA image (e.g. the About picture) to a 32bpp PBGRA
+// DIB at native size. Caller owns the HBITMAP and must DeleteObject it.
+HBITMAP LoadEmbeddedImage(UINT resId, int& w, int& h);
